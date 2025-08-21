@@ -1,51 +1,37 @@
-// Comprehensive query to check Storage Accounts backup configuration
-// Checks both tags and actual backup/soft delete settings
+// Query to find Storage Accounts that do NOT have backup enabled in Azure Backup Vault
 // Excludes storage accounts with 'backup:none' tag
+// Uses left join to identify storage accounts not found in backup vault protected items
 
 resources
-| where type == "microsoft.storage/storageaccounts"
+| where type =~ 'Microsoft.Storage/storageAccounts'
 | extend backupTag = tostring(tags['backup'])
 | where backupTag != "none"  // Exclude accounts explicitly tagged as backup:none
-| extend 
-    // Extract blob service properties for backup and soft delete settings
-    blobProperties = properties.blobRestorePolicy,
-    softDeleteProperties = properties.deleteRetentionPolicy,
-    // Check if point-in-time restore is enabled (indicates Azure Backup for blobs)
-    pointInTimeRestoreEnabled = tobool(properties.blobRestorePolicy.enabled),
-    pointInTimeRestoreDays = toint(properties.blobRestorePolicy.days),
-    // Check soft delete settings
-    softDeleteEnabled = tobool(properties.deleteRetentionPolicy.enabled),
-    softDeleteDays = toint(properties.deleteRetentionPolicy.days),
-    // Additional backup-related properties
-    isVersioningEnabled = tobool(properties.isVersioningEnabled),
-    changeFeedEnabled = tobool(properties.changeFeed.enabled)
+| extend resourceId = tolower(tostring(id))
+| join kind=leftouter (
+    RecoveryServicesResources
+    | where type =~ 'Microsoft.DataProtection/backupVaults/backupInstances'
+       or type =~ 'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems'
+    | extend dataSourceId = tolower(tostring(
+        coalesce(
+            properties.dataSourceInfo.resourceID,
+            properties.dataSourceInformation.dataSourceArmId,
+            properties.linkedResourceInformation.linkedResourceId,
+            properties.sourceResourceId
+        )
+    ))
+    | where isnotempty(dataSourceId)
+    | project dataSourceId, backupItemType = type
+)
+on $left.resourceId == $right.dataSourceId
+| where isnull(dataSourceId)  // Only show storage accounts NOT found in backup vault
 | project 
     StorageAccountName = name,
     ResourceGroup = resourceGroup,
     Location = location,
     SubscriptionId = subscriptionId,
     BackupTag = backupTag,
-    // Backup Status
-    AzureBackupForBlobs = case(
-        isnull(pointInTimeRestoreEnabled), "Unknown/Not Configured",
-        pointInTimeRestoreEnabled == true, strcat("Enabled (", pointInTimeRestoreDays, " days)"),
-        "Disabled"
-    ),
-    // Soft Delete Status  
-    SoftDeleteForBlobs = case(
-        isnull(softDeleteEnabled), "Unknown/Not Configured", 
-        softDeleteEnabled == true, strcat("Enabled (", softDeleteDays, " days)"),
-        "Disabled"
-    ),
-    // Additional protective features
-    VersioningEnabled = case(isnull(isVersioningEnabled), "Unknown", tostring(isVersioningEnabled)),
-    ChangeFeedEnabled = case(isnull(changeFeedEnabled), "Unknown", tostring(changeFeedEnabled)),
-    // Overall backup readiness assessment
-    BackupReadiness = case(
-        pointInTimeRestoreEnabled == true and softDeleteEnabled == true, "✅ Fully Protected",
-        pointInTimeRestoreEnabled == true and softDeleteEnabled != true, "⚠️ Backup Enabled, No Soft Delete",
-        pointInTimeRestoreEnabled != true and softDeleteEnabled == true, "⚠️ Soft Delete Only",
-        "❌ No Protection Configured"
-    ),
+    BackupStatus = "❌ No Backup Configured",
+    Kind = tostring(properties.kind),
+    AccessTier = tostring(properties.accessTier),
     ResourceId = id
-| sort by BackupReadiness desc, StorageAccountName asc
+| sort by StorageAccountName asc
