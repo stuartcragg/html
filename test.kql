@@ -1,29 +1,38 @@
-// Diagnostic query to understand the backup vault structure and storage accounts
-// Run this first to see what we're working with
+// Query to find Storage Accounts without backup by cross-referencing
+// with actual backup instances in Azure Backup Vaults
+// Excludes storage accounts with 'backup:none' tag
 
-// Part 1: Show all storage accounts with their tag status
-resources
+// Step 1: Get all storage accounts (excluding backup:none tagged ones)
+let storageAccounts = resources
 | where type =~ 'Microsoft.Storage/storageAccounts'
 | extend backupTag = tostring(tags['backup'])
+| where backupTag != "none"  // Exclude explicitly excluded accounts
+| extend resourceId = tolower(tostring(id))
+| project resourceId, name, resourceGroup, location, subscriptionId, backupTag, tags;
+
+// Step 2: Get all backup instances from Backup Vaults
+let backupInstances = RecoveryServicesResources
+| where type =~ 'Microsoft.DataProtection/backupVaults/backupInstances'
+| extend dataSourceId = tolower(tostring(properties.dataSourceInfo.resourceID))
+| where isnotempty(dataSourceId)
+| where dataSourceId contains "microsoft.storage/storageaccounts"  // Only storage account backups
+| project dataSourceId, backupInstanceName = name, vaultName = split(id, '/')[8];
+
+// Step 3: Find storage accounts NOT in backup instances
+storageAccounts
+| join kind=leftouter backupInstances on $left.resourceId == $right.dataSourceId
+| where isnull(dataSourceId)  // Storage accounts without backup
 | project 
     StorageAccountName = name,
     ResourceGroup = resourceGroup,
+    Location = location,
+    SubscriptionId = subscriptionId,
     BackupTag = backupTag,
-    HasBackupTag = isnotempty(backupTag),
-    AllTags = tags,
-    ResourceId = tolower(id)
-| sort by StorageAccountName asc
-
-// Uncomment the section below after running the above to see backup vault items
-/*
-// Part 2: Show all backup vault items to understand the structure
-RecoveryServicesResources
-| where type contains "backupVaults" or type contains "DataProtection"
-| project 
-    BackupItemType = type,
-    BackupItemName = name,
-    Properties = properties,
-    DataSourceId = tolower(tostring(properties.dataSourceInfo.resourceID)),
-    AlternateDataSourceId = tolower(tostring(properties.sourceResourceId))
-| sort by BackupItemType asc
-*/
+    BackupStatus = "❌ No Backup Configured",
+    ShouldHaveBackup = case(
+        isempty(backupTag), "⚠️ No backup tag - needs review",
+        backupTag == "weekly", "❌ Tagged for backup but not configured",
+        strcat("🔍 Has tag '", backupTag, "' - verify if backup needed")
+    ),
+    ResourceId = resourceId
+| sort by ShouldHaveBackup desc, StorageAccountName asc
