@@ -1,0 +1,11 @@
+Resources
+| where type == "microsoft.storage/storageaccounts"
+| extend 
+    backupTagValue = case(
+        isnotempty(tags.backup), tags.backup,
+        isnotempty(tags.Backup), tags.Backup,
+        "not-set"
+    )
+| where (backupTagValue != "not-set") and (tolower(backupTagValue) != "none")
+| project name, resourceGroup, backupTagValue
+| limit 10
