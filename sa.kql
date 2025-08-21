@@ -1,86 +1,38 @@
+// Simple Storage Accounts Vaulted Backup Check
+// Shows storage accounts that should have vaulted backups but don't
+
 Resources
 | where type == "microsoft.storage/storageaccounts"
 | extend 
     // Check backup tag (case insensitive)
     backupTagValue = case(
-        isnotempty(tags.backup), tags.backup,
-        isnotempty(tags.Backup), tags.Backup,
-        isnotempty(tags.BACKUP), tags.BACKUP,
-        isnotempty(tags.BackUp), tags.BackUp,
-        isnotempty(tags.backUp), tags.backUp,
+        isnotempty(tags.backup), tolower(tags.backup),
+        isnotempty(tags.Backup), tolower(tags.Backup),
+        isnotempty(tags.BACKUP), tolower(tags.BACKUP),
+        isnotempty(tags.BackUp), tolower(tags.BackUp),
+        isnotempty(tags.backUp), tolower(tags.backUp),
         "not-set"
     )
-| where
-    // Include only if backup tag exists AND is NOT "none"
-    (backupTagValue != "not-set") and 
-    (tolower(backupTagValue) != "none")
+| where 
+    // Exclude storage accounts with backup:none tag
+    backupTagValue != "none"
 | join kind=leftouter (
-    // Check for vaulted backup instances in backup vaults
+    // Find storage accounts that have vaulted backup configured
     Resources
     | where type == "microsoft.dataprotection/backupvaults/backupinstances"
     | where properties.dataSourceInfo.datasourceType == "Microsoft.Storage/storageAccounts/blobServices"
-    | project backupInstanceId = id, 
-              protectedStorageAccount = properties.dataSourceInfo.resourceID,
-              backupVaultName = split(id, '/')[8],
-              protectionState = properties.currentProtectionState
+    | project protectedStorageAccount = tolower(properties.dataSourceInfo.resourceID)
 ) on $left.id == $right.protectedStorageAccount
-| extend 
-    // Check for soft delete configuration using correct property path
-    softDeleteEnabled = tobool(properties.blobServices.default.deleteRetentionPolicy.enabled),
-    softDeleteDays = toint(properties.blobServices.default.deleteRetentionPolicy.days),
-    
-    // Check for versioning using correct property path  
-    versioningEnabled = tobool(properties.blobServices.default.isVersioningEnabled),
-    
-    // Check for operational backup (point-in-time restore)
-    operationalBackupEnabled = tobool(properties.blobServices.default.restorePolicy.enabled),
-    restoreDays = toint(properties.blobServices.default.restorePolicy.days),
-    
-    // Determine if vaulted backup is configured
-    vaultedBackupConfigured = isnotempty(backupInstanceId)
 | where 
-    // Filter for storage accounts WITHOUT proper backup protection
-    (vaultedBackupConfigured != true) or 
-    (softDeleteEnabled != true) or 
-    (versioningEnabled != true) or
-    (operationalBackupEnabled != true)
+    // Show only storage accounts WITHOUT vaulted backup
+    isempty(protectedStorageAccount)
 | project 
     StorageAccountName = name,
     ResourceGroup = resourceGroup,
     Location = location,
-    SubscriptionId = subscriptionId,
-    StorageKind = kind,
-    AccessTier = sku.tier,
-    
-    // Show backup tag status
     BackupTag = case(
         backupTagValue == "not-set", "No backup tag",
-        tolower(backupTagValue) == "none", "Backup: none", 
-        strcat("Backup: ", backupTagValue)
+        strcat("backup: ", backupTagValue)
     ),
-    
-    // Backup configuration status
-    VaultedBackup = case(
-        vaultedBackupConfigured == true, strcat("Protected (", backupVaultName, ")"),
-        "No Vaulted Backup"
-    ),
-    OperationalBackup = case(
-        operationalBackupEnabled == true, strcat("Enabled (", restoreDays, " days)"),
-        "Disabled"
-    ),
-    SoftDelete = case(
-        softDeleteEnabled == true, strcat("Enabled (", softDeleteDays, " days)"),
-        "Disabled"
-    ),
-    Versioning = case(
-        versioningEnabled == true, "Enabled",
-        "Disabled"
-    ),
-    
-    // Overall backup status
-    BackupStatus = case(
-        vaultedBackupConfigured == true and softDeleteEnabled == true and versioningEnabled == true, "Fully Protected",
-        vaultedBackupConfigured == true, "Partially Protected",
-        "Not Protected"
-    )
-| order by BackupStatus desc, StorageAccountName asc
+    VaultedBackupStatus = "Not Configured"
+| order by StorageAccountName asc
