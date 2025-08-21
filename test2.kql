@@ -1,1 +1,28 @@
 
+// Debug query to understand the data structure
+// Run each section separately to troubleshoot
+
+// SECTION 1: Storage accounts (excluding backup:none)
+resources
+| where type =~ 'Microsoft.Storage/storageAccounts'
+| extend backupTag = tostring(tags['backup'])
+| where backupTag != "none"
+| project 
+    StorageAccountName = name,
+    BackupTag = backupTag,
+    ResourceId = tolower(id),
+    ShortResourceId = tolower(strcat("/subscriptions/", subscriptionId, "/resourceGroups/", resourceGroup, "/providers/Microsoft.Storage/storageAccounts/", name))
+| sort by StorageAccountName asc
+
+// SECTION 2: Backup instances (run this separately)
+/*
+RecoveryServicesResources
+| where type =~ 'Microsoft.DataProtection/backupVaults/backupInstances'
+| extend dataSourceId = tolower(tostring(properties.dataSourceInfo.resourceID))
+| project 
+    BackupInstanceName = name,
+    DataSourceId = dataSourceId,
+    VaultName = split(id, '/')[8],
+    Properties = properties.dataSourceInfo
+| sort by BackupInstanceName asc
+*/
