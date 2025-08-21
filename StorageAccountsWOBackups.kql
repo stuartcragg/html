@@ -1,0 +1,34 @@
+// Storage Accounts without Backup Protection
+// This query identifies storage accounts that lack backup configuration
+
+Resources
+| where type == "microsoft.storage/storageaccounts"
+| extend 
+    hasBackupVault = isnotempty(properties.dataPolicy.backupPolicy),
+    hasRestorePolicy = isnotempty(properties.restorePolicy),
+    blobRestoreEnabled = properties.restorePolicy.enabled == true,
+    versioningEnabled = properties.blobServices.default.isVersioningEnabled == true,
+    softDeleteEnabled = properties.blobServices.default.deleteRetentionPolicy.enabled == true
+| where hasBackupVault == false and hasRestorePolicy == false
+| project 
+    StorageAccountName = name,
+    ResourceGroup = resourceGroup,
+    Location = location,
+    SubscriptionId = subscriptionId,
+    StorageKind = kind,
+    AccessTier = sku.tier,
+    BackupStatus = "No Backup Protection",
+    SoftDeleteDays = properties.blobServices.default.deleteRetentionPolicy.days,
+    CreatedTime = properties.creationTime
+| order by StorageAccountName asc
+
+// Alternative query focusing on Recovery Services Vault associations
+// Resources
+// | where type == "microsoft.storage/storageaccounts"
+// | join kind=leftouter (
+//     Resources
+//     | where type == "microsoft.recoveryservices/vaults"
+//     | extend vaultName = name
+// ) on subscriptionId
+// | where isempty(vaultName)
+// | project name, resourceGroup, location, subscriptionId
