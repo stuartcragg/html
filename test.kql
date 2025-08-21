@@ -1,4 +1,5 @@
-// Simple query: Storage accounts without backup that don't have 'backup:none' tag
+// Let's test the join logic step by step
+// First, let's see what happens when we do the join but show ALL results
 
 resources
 | where type =~ 'Microsoft.Storage/storageAccounts'
@@ -13,12 +14,11 @@ resources
     | project dataSourceId
 )
 on $left.resourceId == $right.dataSourceId
-| where isnull(dataSourceId)
 | project 
     StorageAccountName = name,
     ResourceGroup = resourceGroup,
-    Location = location,
-    SubscriptionId = subscriptionId,
     BackupTag = backupTag,
-    ResourceId = resourceId
-| sort by StorageAccountName asc
+    HasBackup = iif(isnull(dataSourceId), "❌ No Backup", "✅ Has Backup"),
+    StorageResourceId = resourceId,
+    BackupDataSourceId = dataSourceId
+| sort by HasBackup desc, StorageAccountName asc
