@@ -1,37 +1,29 @@
-// Query to find Storage Accounts that do NOT have backup enabled in Azure Backup Vault
-// Excludes storage accounts with 'backup:none' tag
-// Uses left join to identify storage accounts not found in backup vault protected items
+// Diagnostic query to understand the backup vault structure and storage accounts
+// Run this first to see what we're working with
 
+// Part 1: Show all storage accounts with their tag status
 resources
 | where type =~ 'Microsoft.Storage/storageAccounts'
 | extend backupTag = tostring(tags['backup'])
-| where backupTag != "none"  // Exclude accounts explicitly tagged as backup:none
-| extend resourceId = tolower(tostring(id))
-| join kind=leftouter (
-    RecoveryServicesResources
-    | where type =~ 'Microsoft.DataProtection/backupVaults/backupInstances'
-       or type =~ 'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems'
-    | extend dataSourceId = tolower(tostring(
-        coalesce(
-            properties.dataSourceInfo.resourceID,
-            properties.dataSourceInformation.dataSourceArmId,
-            properties.linkedResourceInformation.linkedResourceId,
-            properties.sourceResourceId
-        )
-    ))
-    | where isnotempty(dataSourceId)
-    | project dataSourceId, backupItemType = type
-)
-on $left.resourceId == $right.dataSourceId
-| where isnull(dataSourceId)  // Only show storage accounts NOT found in backup vault
 | project 
     StorageAccountName = name,
     ResourceGroup = resourceGroup,
-    Location = location,
-    SubscriptionId = subscriptionId,
     BackupTag = backupTag,
-    BackupStatus = "❌ No Backup Configured",
-    Kind = tostring(properties.kind),
-    AccessTier = tostring(properties.accessTier),
-    ResourceId = id
+    HasBackupTag = isnotempty(backupTag),
+    AllTags = tags,
+    ResourceId = tolower(id)
 | sort by StorageAccountName asc
+
+// Uncomment the section below after running the above to see backup vault items
+/*
+// Part 2: Show all backup vault items to understand the structure
+RecoveryServicesResources
+| where type contains "backupVaults" or type contains "DataProtection"
+| project 
+    BackupItemType = type,
+    BackupItemName = name,
+    Properties = properties,
+    DataSourceId = tolower(tostring(properties.dataSourceInfo.resourceID)),
+    AlternateDataSourceId = tolower(tostring(properties.sourceResourceId))
+| sort by BackupItemType asc
+*/
