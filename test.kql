@@ -1,12 +1,12 @@
 resources
 | where type =~ 'microsoft.storage/storageaccounts'
-| project storageId = tolower(id), storageName = name, resourceGroup, subscriptionId, location, tags
-| join kind = leftanti (
+| where tags['backup'] != 'none'
+| project storageId = tolower(id), storageName = name, resourceGroup, subscriptionId, location, backupTag = tags['backup']
+| where storageId !in (
     resources
     | where type =~ 'microsoft.dataprotection/backupvaults/backupinstances'
     | extend dsInfo = properties.dataSourceInfo
     | where dsInfo.resourceType =~ 'Microsoft.Storage/storageAccounts'
-    | project protectedId = tolower(dsInfo.resourceID)
-) on $left.storageId == $right.protectedId
-| where tags['backup'] != 'none'
-| project storageName, resourceGroup, subscriptionId, location, backupTag = tags['backup']
+    | project tolower(dsInfo.resourceID)
+)
+| project storageName, resourceGroup, subscriptionId, location, backupTag
