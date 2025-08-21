@@ -1,33 +1,24 @@
-// Query to find Storage Accounts without backup by joining directly
-// with backup instances in Azure Backup Vaults
-// Excludes storage accounts with 'backup:none' tag
+// Simple query: Storage accounts without backup that don't have 'backup:none' tag
 
 resources
 | where type =~ 'Microsoft.Storage/storageAccounts'
 | extend backupTag = tostring(tags['backup'])
-| where backupTag != "none"  // Exclude explicitly excluded accounts
+| where isnull(tags['backup']) or backupTag != "none"
 | extend resourceId = tolower(tostring(id))
 | join kind=leftouter (
     RecoveryServicesResources
     | where type =~ 'Microsoft.DataProtection/backupVaults/backupInstances'
+    | where tostring(properties.dataSourceInfo.datasourceType) =~ "Microsoft.Storage/storageAccounts/blobServices"
     | extend dataSourceId = tolower(tostring(properties.dataSourceInfo.resourceID))
-    | where isnotempty(dataSourceId)
-    | where dataSourceId contains "microsoft.storage/storageaccounts"
-    | project dataSourceId, backupInstanceName = name, vaultName = split(id, '/')[8]
+    | project dataSourceId
 )
 on $left.resourceId == $right.dataSourceId
-| where isnull(dataSourceId)  // Storage accounts without backup
+| where isnull(dataSourceId)
 | project 
     StorageAccountName = name,
     ResourceGroup = resourceGroup,
     Location = location,
     SubscriptionId = subscriptionId,
     BackupTag = backupTag,
-    BackupStatus = "❌ No Backup Configured",
-    ShouldHaveBackup = case(
-        isempty(backupTag), "⚠️ No backup tag - needs review",
-        backupTag == "weekly", "❌ Tagged for backup but not configured",
-        strcat("🔍 Has tag '", backupTag, "' - verify if backup needed")
-    ),
     ResourceId = resourceId
-| sort by ShouldHaveBackup desc, StorageAccountName asc
+| sort by StorageAccountName asc
