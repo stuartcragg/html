@@ -16,12 +16,12 @@ Resources
     (tolower(backupTagValue) != "none")
 | join kind=leftouter (
     // Check for vaulted backup instances in backup vaults
-    RecoveryServicesResources
+    Resources
     | where type == "microsoft.dataprotection/backupvaults/backupinstances"
     | where properties.dataSourceInfo.datasourceType == "Microsoft.Storage/storageAccounts/blobServices"
     | project backupInstanceId = id, 
               protectedStorageAccount = properties.dataSourceInfo.resourceID,
-              backupVault = split(id, '/backupInstances/')[0],
+              backupVaultName = split(id, '/')[8],
               protectionState = properties.currentProtectionState
 ) on $left.id == $right.protectedStorageAccount
 | extend 
@@ -54,33 +54,33 @@ Resources
     
     // Show backup tag status
     BackupTag = case(
-        backupTagValue == "not-set", "❌ No backup tag",
-        tolower(backupTagValue) == "none", "❌ Backup: none", 
-        strcat("✅ Backup: ", backupTagValue)
+        backupTagValue == "not-set", "No backup tag",
+        tolower(backupTagValue) == "none", "Backup: none", 
+        strcat("Backup: ", backupTagValue)
     ),
     
     // Backup configuration status
     VaultedBackup = case(
-        vaultedBackupConfigured == true, strcat("✅ Protected (", split(backupVault, '/')[-1], ")"),
-        "❌ No Vaulted Backup"
+        vaultedBackupConfigured == true, strcat("Protected (", backupVaultName, ")"),
+        "No Vaulted Backup"
     ),
     OperationalBackup = case(
-        operationalBackupEnabled == true, strcat("✅ Enabled (", restoreDays, " days)"),
-        "❌ Disabled"
+        operationalBackupEnabled == true, strcat("Enabled (", restoreDays, " days)"),
+        "Disabled"
     ),
     SoftDelete = case(
-        softDeleteEnabled == true, strcat("✅ Enabled (", softDeleteDays, " days)"),
-        "❌ Disabled"
+        softDeleteEnabled == true, strcat("Enabled (", softDeleteDays, " days)"),
+        "Disabled"
     ),
     Versioning = case(
-        versioningEnabled == true, "✅ Enabled",
-        "❌ Disabled"
+        versioningEnabled == true, "Enabled",
+        "Disabled"
     ),
     
     // Overall backup status
     BackupStatus = case(
-        vaultedBackupConfigured == true and softDeleteEnabled == true and versioningEnabled == true, "✅ Fully Protected",
-        vaultedBackupConfigured == true, "⚠️ Partially Protected",
-        "❌ Not Protected"
+        vaultedBackupConfigured == true and softDeleteEnabled == true and versioningEnabled == true, "Fully Protected",
+        vaultedBackupConfigured == true, "Partially Protected",
+        "Not Protected"
     )
 | order by BackupStatus desc, StorageAccountName asc
