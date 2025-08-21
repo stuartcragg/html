@@ -1,0 +1,77 @@
+// Improved Storage Accounts Backup Status Query with Tag Filter
+// This query checks for Azure Backup, soft delete, and backup tags
+
+Resources
+| where type == "microsoft.storage/storageaccounts"
+| extend 
+    // Check for Azure Backup for blobs (operational backup)
+    operationalBackupEnabled = tobool(properties.blobServices.default.restorePolicy.enabled),
+    
+    // Check for soft delete configuration
+    softDeleteEnabled = tobool(properties.blobServices.default.deleteRetentionPolicy.enabled),
+    softDeleteDays = toint(properties.blobServices.default.deleteRetentionPolicy.days),
+    
+    // Check for versioning
+    versioningEnabled = tobool(properties.blobServices.default.isVersioningEnabled),
+    
+    // Point-in-time restore days
+    restoreDays = toint(properties.blobServices.default.restorePolicy.days),
+    
+    // Check backup tag (case insensitive)
+    backupTagValue = case(
+        isnotempty(tags.backup), tags.backup,
+        isnotempty(tags.Backup), tags.Backup,
+        isnotempty(tags.BACKUP), tags.BACKUP,
+        isnotempty(tags.BackUp), tags.BackUp,
+        isnotempty(tags.backUp), tags.backUp,
+        "not-set"
+    )
+| where 
+    // Filter for storage accounts WITHOUT proper backup protection
+    (operationalBackupEnabled != true) or 
+    (softDeleteEnabled != true) or 
+    (softDeleteDays < 7)
+| where
+    // Include only if backup tag exists AND is NOT "none"
+    (backupTagValue != "not-set") and 
+    (tolower(backupTagValue) != "none")
+| project 
+    StorageAccountName = name,
+    ResourceGroup = resourceGroup,
+    Location = location,
+    SubscriptionId = subscriptionId,
+    StorageKind = kind,
+    AccessTier = sku.tier,
+    
+    // Show backup tag status
+    BackupTag = case(
+        backupTagValue == "not-set", "❌ No backup tag",
+        tolower(backupTagValue) == "none", "❌ Backup: none",
+        strcat("✅ Backup: ", backupTagValue)
+    ),
+    
+    // Backup status details
+    AzureBackupEnabled = case(
+        operationalBackupEnabled == true, "✅ Enabled",
+        "❌ Disabled"
+    ),
+    SoftDeleteEnabled = case(
+        softDeleteEnabled == true, strcat("✅ Enabled (", softDeleteDays, " days)"),
+        "❌ Disabled"
+    ),
+    VersioningEnabled = case(
+        versioningEnabled == true, "✅ Enabled",
+        "❌ Disabled"
+    ),
+    RestoreDays = case(
+        operationalBackupEnabled == true, restoreDays,
+        0
+    ),
+    
+    // Overall backup status
+    BackupStatus = case(
+        operationalBackupEnabled == true and softDeleteEnabled == true and softDeleteDays >= 7, "✅ Protected",
+        operationalBackupEnabled == true and (softDeleteEnabled != true or softDeleteDays < 7), "⚠️ Partial Protection",
+        "❌ Not Protected"
+    )
+| order by BackupStatus desc, StorageAccountName asc
