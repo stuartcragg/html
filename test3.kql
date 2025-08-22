@@ -1,0 +1,17 @@
+resources
+| where type =~ 'Microsoft.Storage/storageAccounts'
+| extend backupTag = tostring(tags['backup'])
+| where backupTag != "none"
+| project 
+    StorageAccountName = name,
+    BackupTag = backupTag,
+    ResourceId = tolower(id),
+    ShortResourceId = tolower(strcat("/subscriptions/", subscriptionId, "/resourceGroups/", resourceGroup, "/providers/Microsoft.Storage/storageAccounts/", name))
+| join kind=leftanti (
+    resources
+    | where type =~ 'Microsoft.DataProtection/backupVaults/backupInstances'
+    | extend dataSourceId = tolower(tostring(properties.dataSourceInfo.resourceID))
+    | project DataSourceId = dataSourceId
+) on $left.ResourceId == $right.DataSourceId
+| project StorageAccountName, BackupTag, ResourceId, ShortResourceId
+| sort by StorageAccountName asc
